@@ -1,0 +1,141 @@
+module;
+#include <atomic>
+#include <exception>
+#include <future>
+#include <thread>
+#include <tuple>
+#include <type_traits>
+#include <vector>
+export module thread_plus:pool;
+import :channel;
+
+namespace thread_plus {
+  /*
+    Thrown when join is performed on a pool whose join is running on another thread.
+  */
+  struct PoolJoining : public std::exception {
+    const char *what() const noexcept {
+      return "Cannot join on a joining pool";
+    }
+  };
+  /*
+    Thrown when join is performed on a dead pool
+  */
+  struct PoolDead : public std::exception {
+    const char *what() const noexcept {
+      return "Pool is already joined";
+    }
+  };
+  /*
+    Thrown when a task fails to run
+  */
+  struct TaskFail : public std::exception {
+    TaskFail (std::string_view msg) : 
+      _msg { msg }
+    {}
+    const char *what() const noexcept {
+      return _msg.c_str();
+    }
+    private:
+      std::string _msg;
+  };
+  /*
+    Creates a task. This task is usable only once.
+  */
+  struct Task {
+    virtual void operator()() noexcept = 0;
+    virtual ~Task() = default;
+  };
+  /*
+    This will hold the arguments partially before the arguments are passed into the
+    thread pool
+  */
+  template <typename T, typename F, typename... Args>
+    requires(std::is_invocable_r_v<T, F, Args...>)
+  struct ParametrizedTask : public Task {
+    /*
+      Parametrized TasK Constructor saves the arguments into the class by VALUE. 
+    */
+    ParametrizedTask(F func, std::promise<T> promise, Args... args) :
+      _args(std::move(args)...), _func(std::move(func)), _promise(std::move(promise)) {}
+    /*
+      Excutes the task. This guarantees exception freedom.
+    */
+    void operator()() noexcept {
+      try {
+        _promise.set_value(std::apply(_func, std::move(_args)));
+      } catch (...) {
+        _promise.set_exception(std::current_exception());
+      }
+    }
+
+  private:
+    F _func;
+    std::promise<T> _promise;
+    std::tuple<Args...> _args;
+  };
+  /*
+    Pool State
+  */
+  enum PoolState { INIT, WORKING, JOINING, DEAD };
+
+  /*
+    Creates a thread pool
+  */
+  export struct Pool {
+  public:
+    Pool(size_t pool_size) : _state{PoolState::INIT} {
+      _workers.reserve(pool_size);
+      for (size_t i = 0; i < pool_size; i += 1)
+        _workers.emplace_back(std::thread{&Pool::_thread_task, this});
+      // Relaxed here since there will be no ordering yet.
+      _state.store(PoolState::WORKING, std::memory_order_relaxed);
+    }
+    /*
+      Adds a task into the pool
+    */
+    template <typename F, typename... Args>
+      requires(std::invocable<F, Args...>)
+    std::future<
+      decltype(std::declval<F>()(std::declval<Args>()...))
+    > add_task(F func, Args &&...args) {
+      using R = decltype(std::declval<F>()(std::declval<Args>()...));
+      std::promise<R> promise;
+      std::future<R> future = promise.get_future();
+      _broker.send(std::make_unique<ParametrizedTask<R, F, Args...>>(
+        func, std::move(promise), std::forward<Args>(args)...
+      ));
+      return std::move(future);
+    }
+    /*
+      Returns the size of the thread pool
+    */
+    size_t size() {
+      return _workers.size();
+    }
+    ~Pool() {
+      _broker.kill();
+      for (auto &worker : _workers) {
+        if (worker.joinable()) worker.join();
+      }
+    }
+
+  private:
+    mutable Channel<Task> _broker;
+    std::vector<std::thread> _workers;
+    std::atomic<PoolState> _state;
+
+    void _thread_task() const noexcept {
+      while (true) {
+        auto expected_task = _broker.recv();
+        if (expected_task.has_value()) {
+          std::unique_ptr<Task> task = std::move(expected_task.value());
+          // Validity of the task is guaranteed by this thread pool. No invalid task will be sent
+          // through the channel.
+          (*task)();
+        } else
+          break;
+      }
+    }
+  };
+}

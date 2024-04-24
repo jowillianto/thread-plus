@@ -1,0 +1,207 @@
+module;
+#include <atomic>
+#include <condition_variable>
+#include <exception>
+#include <optional>
+#include <memory>
+#include <mutex>
+#include <queue>
+#include <ranges>
+#include <expected>
+export module thread_plus:channel;
+
+namespace thread_plus {
+  struct DeadChannel : public std::exception {
+    DeadChannel(bool is_send) {
+      _is_send = is_send;
+    }
+    const char *what() {
+      if (_is_send) return "Trying to send through a dead channel";
+      else
+        return "Trying to receive from a dead channel";
+    }
+
+  private:
+    bool _is_send;
+  };
+  /*
+    A pipe that allows multithreaded communication. When used, the thread has to send ownership
+    of the object created with a unique pointer to the other thread. Does not limit the amount of
+    message receivable.
+  */
+  export template <typename T> struct Channel {
+    Channel() : _is_alive{true} {}
+    /*
+      Adds one message into the channel's message queue. Throws if the channel is dead.
+    */
+    void send(std::unique_ptr<T> msg) {
+      auto is_alive = _check_alive(true);
+      if (!is_alive.has_value()) throw is_alive.error();
+      // Add to queue
+      std::unique_lock l{_queue_mut};
+      _msg_queue.push(std::move(msg));
+      // Notifying only one thread guarantees that only one thread will receive the message.
+      _sig.notify_one();
+    }
+    
+    /*
+      An easier way to send, send with the constructor of the message.
+    */
+    template<typename ...Args> requires (std::constructible_from<T, Args... >)
+    void send(Args&& ...args) {
+      auto message = std::make_unique<T>(std::forward<Args>(args)...);
+      send(std::move(message));
+    }
+
+    /*
+      Sends messages in bulk
+    */
+    template <std::ranges::forward_range Container>
+      requires(std::same_as<std::ranges::range_value_t<Container>, std::unique_ptr<T>>)
+    void send(Container &messages) {
+      auto is_alive = _check_alive(true);
+      if (!is_alive.has_value()) throw is_alive.error();
+      // Add bulk to queue
+      std::unique_lock l{_queue_mut};
+      for (std::unique_ptr<T> &message : messages) {
+        _msg_queue.push(std::move(message));
+      }
+      _sig.notify_all();
+    }
+    /*
+      Receives one message from the channel. This call will block if there is no available message.
+    */
+    std::expected<std::unique_ptr<T>, DeadChannel> recv() {
+      std::unique_lock l{_queue_mut};
+      while (_msg_queue.empty()) {
+        // Check for aliveness of thread and kill it if it is not alive.
+        auto is_alive = _check_alive(false);
+        if (!is_alive.has_value()) return std::unexpected{is_alive.error()};
+        // Otherwise wait for signal.
+        _sig.wait(l);
+      }
+      std::unique_ptr<T> msg = std::move(_msg_queue.front());
+      _msg_queue.pop();
+      // Signal other thread if the message queue is not empty.
+      if (_msg_queue.size() > 1) _sig.notify_all();
+      else if (_msg_queue.size() == 1) _sig.notify_one();
+      return std::expected<std::unique_ptr<T>, DeadChannel>{std::move(msg)};
+    }
+    /*
+      Receives one message in a non blocking way.
+    */
+    std::optional<std::expected<std::unique_ptr<T>, DeadChannel>> try_recv() {
+      auto is_alive = _check_alive(false);
+      if (!is_alive.has_value()) return std::unexpected{is_alive.error()};
+      std::unique_lock l{_queue_mut};
+      if (_msg_queue.empty()) return std::nullopt;
+      std::unique_ptr<T> msg = std::move(_msg_queue.front());
+      _msg_queue.pop();
+      if (!_msg_queue.empty()) _sig.notify_all();
+      return std::expected<std::unique_ptr<T>, DeadChannel>{std::move(msg)};
+    }
+    /*
+      Kills the channel.
+    */
+    void kill() {
+      // Kills the channel and abruptly pings all the threads.
+      _is_alive.store(false, std::memory_order::release);
+      // Notify all threads to stop
+      std::unique_lock l{_queue_mut};
+      _sig.notify_all();
+      std::queue<std::unique_ptr<T>> empty_queue;
+      _msg_queue.swap(empty_queue);
+    }
+
+    ~Channel() {
+      if (_is_alive.load(std::memory_order::acquire)) kill();
+    }
+
+  private:
+    std::queue<std::unique_ptr<T>> _msg_queue;
+    std::mutex _queue_mut;
+    std::condition_variable _sig;
+    std::atomic_bool _is_alive;
+
+    /*
+      Checks if a channel is alive and throws if the channel is not alive.
+    */
+    std::expected<void, DeadChannel> _check_alive(bool is_send) const noexcept {
+      if (!_is_alive.load(std::memory_order::acquire)) return std::unexpected{DeadChannel{is_send}};
+      return {};
+    }
+  };
+  /*
+    Specialize Channel for void. This is useful for synchronization
+  */
+  template <> struct Channel<void> {
+  public:
+    Channel() : _queue{0}, _is_alive(true) {}
+    /*
+      Pings another thread
+    */
+    void send() {
+      auto is_alive = _check_alive(true);
+      if (!is_alive.has_value()) throw is_alive.error();
+      _queue.fetch_add(1, std::memory_order::relaxed);
+    }
+    /*
+      Pings N other threads
+    */
+    void send(size_t msg_count) {
+      auto is_alive = _check_alive(true);
+      if (!is_alive.has_value()) throw is_alive.error();
+      _queue.fetch_add(msg_count, std::memory_order::release);
+    }
+    /*
+      Wait for ping from another thread
+    */
+    std::expected<void, DeadChannel> recv() {
+      while (_queue.load(std::memory_order::relaxed) == 0) {
+        auto is_alive = _check_alive(true);
+        if (!is_alive.has_value()) return std::unexpected{is_alive.error()};
+        _queue.wait(0, std::memory_order::relaxed);
+      }
+      auto remaining_msg = _queue.fetch_sub(1, std::memory_order::relaxed) - 1;
+      if (remaining_msg > 1) _queue.notify_all();
+      else if (remaining_msg == 1)
+        _queue.notify_one();
+      return {};
+    }
+    /*
+      Try to check if a ping can be received
+    */
+    std::optional<std::expected<void, DeadChannel>> try_recv() {
+      auto is_alive = _check_alive(true);
+      if (!is_alive.has_value()) return std::unexpected{is_alive.error()};
+      if (_queue.load(std::memory_order::relaxed) == 0) return std::nullopt;
+      auto remaining_msg = _queue.fetch_sub(1, std::memory_order::relaxed) - 1;
+      if (remaining_msg > 1) _queue.notify_all();
+      else if (remaining_msg == 1)
+        _queue.notify_one();
+      return std::optional{ std::expected<void, DeadChannel>{} };
+    }
+    /*
+      Kill this pinging service
+    */
+    void kill() {
+      _is_alive.store(false, std::memory_order::release);
+      _queue.store(0, std::memory_order::release);
+      _queue.notify_all();
+    }
+    ~Channel() {
+      if (_is_alive.load(std::memory_order::acquire)) kill();
+    }
+
+  private:
+    std::atomic_bool _is_alive;
+    std::atomic<size_t> _queue;
+    /*
+      Checks if a channel is alive and throws if the channel is not alive.
+    */
+    std::expected<void, DeadChannel> _check_alive(bool is_send) const noexcept {
+      if (!_is_alive.load(std::memory_order::relaxed)) return std::unexpected{DeadChannel{is_send}};
+      return {};
+    }
+  };
+}
