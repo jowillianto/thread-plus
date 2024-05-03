@@ -1,111 +1,170 @@
 module;
-#include <atomic>
+#include <algorithm>
+#include <concepts>
 #include <exception>
+#include <expected>
 #include <future>
+#include <memory>
 #include <thread>
 #include <tuple>
-#include <type_traits>
-#include <vector>
+#include <utility>
 export module thread_plus:pool;
 import :channel;
 
-namespace thread_plus {
+namespace thread_plus::pool {
   /*
-    Thrown when join is performed on a pool whose join is running on another thread.
+    Thrown when join is performed on a pool whose join is running on another
+    thread.
   */
-  struct PoolJoining : public std::exception {
-    const char *what() const noexcept {
-      return "Cannot join on a joining pool";
+  export enum class ErrorCode { POOL_IS_NOT_LISTENING };
+  export template <ErrorCode ec> struct PoolError : public std::exception {
+    constexpr ErrorCode code() const {
+      return ec;
+    }
+    constexpr const char *what() const noexcept {
+      switch (code()) {
+        case ErrorCode::POOL_IS_NOT_LISTENING:
+          return "Pool is not listening. Either dead or joining";
+      }
     }
   };
+
   /*
-    Thrown when join is performed on a dead pool
+    The context of a task related to the current worker.
   */
-  struct PoolDead : public std::exception {
-    const char *what() const noexcept {
-      return "Pool is already joined";
-    }
+  export struct TaskContext {
+    size_t worker_id; // The id of the thread in the vector
+    std::thread::id thread_id; // The id of the thread in the system
+    size_t processed_task; // How many task the thread has processed
+    std::chrono::time_point<std::chrono::system_clock>
+      start_time; // The time the thread had been up for
   };
-  /*
-    Thrown when a task fails to run
-  */
-  struct TaskFail : public std::exception {
-    TaskFail (std::string_view msg) : 
-      _msg { msg }
-    {}
-    const char *what() const noexcept {
-      return _msg.c_str();
-    }
-    private:
-      std::string _msg;
-  };
+
   /*
     Creates a task. This task is usable only once.
   */
   struct Task {
-    virtual void operator()() noexcept = 0;
+    virtual void operator()(const TaskContext &context) noexcept = 0;
     virtual ~Task() = default;
   };
   /*
-    This will hold the arguments partially before the arguments are passed into the
-    thread pool
+    Parametrized task when executed with context. A constructible check can be
+    made to see which branch of creation should be taken.
   */
-  template <typename T, typename F, typename... Args>
-    requires(std::is_invocable_r_v<T, F, Args...>)
-  struct ParametrizedTask : public Task {
-    /*
-      Parametrized TasK Constructor saves the arguments into the class by VALUE. 
-    */
-    ParametrizedTask(F func, std::promise<T> promise, Args... args) :
-      _args(std::move(args)...), _func(std::move(func)), _promise(std::move(promise)) {}
-    /*
-      Excutes the task. This guarantees exception freedom.
-    */
-    void operator()() noexcept {
+  template <typename F, typename... Args>
+    requires(std::invocable<F, const TaskContext &, Args...>)
+  struct ParametrizedContextedTask : public Task {
+    using return_t = decltype(std::declval<F>()(std::declval<const TaskContext &, Args...>()));
+    ParametrizedContextedTask(F func, std::promise<return_t> promise, Args... args) :
+      _func{std::move(func)}, _promise{std::move(promise)}, _args{std::move(args)...} {}
+    void operator()(const TaskContext &context) noexcept {
       try {
-        _promise.set_value(std::apply(_func, std::move(_args)));
+        auto args = std::tuple_cat(std::make_tuple(context), std::move(_args));
+        // Somehow the void case of _promise.set_value is called without
+        // arguments.
+        if constexpr (std::same_as<return_t, void>) {
+          std::apply(_func, std::move(args));
+          _promise.set_value();
+        } else {
+          _promise.set_value(std::apply(_func, std::move(args)));
+        }
       } catch (...) {
-        _promise.set_exception(std::current_exception());
+        _promise.set_exception(std::exception_ptr());
       }
     }
 
   private:
     F _func;
-    std::promise<T> _promise;
+    std::promise<return_t> _promise;
     std::tuple<Args...> _args;
   };
   /*
-    Pool State
+    Parameterized task when executed without context. A constructible check can be
+    made to see which branch of creation should be taken.
   */
-  enum PoolState { INIT, WORKING, JOINING, DEAD };
+  template <typename F, typename... Args>
+    requires(std::invocable<F, Args...>)
+  struct ParametrizedTask : public Task {
+    using return_t = decltype(std::declval<F>()(std::declval<Args>()...));
+    ParametrizedTask(F func, std::promise<return_t> promise, Args... args) :
+      _func{std::move(func)}, _promise{std::move(promise)}, _args{std::move(args)...} {}
+    void operator()(const TaskContext &context) noexcept {
+      try {
+        // Somehow the void case of _promise.set_value is called without
+        // arguments.
+        if constexpr (std::same_as<return_t, void>) {
+          std::apply(_func, std::move(_args));
+          _promise.set_value();
+        } else {
+          _promise.set_value(std::apply(_func, std::move(_args)));
+        }
+      } catch (...) {
+        _promise.set_exception(std::exception_ptr());
+      }
+    }
 
+  private:
+    F _func;
+    std::promise<return_t> _promise;
+    std::tuple<Args...> _args;
+  };
   /*
     Creates a thread pool
   */
   export struct Pool {
   public:
-    Pool(size_t pool_size) : _state{PoolState::INIT} {
-      _workers.reserve(pool_size);
-      for (size_t i = 0; i < pool_size; i += 1)
-        _workers.emplace_back(std::thread{&Pool::_thread_task, this});
-      // Relaxed here since there will be no ordering yet.
-      _state.store(PoolState::WORKING, std::memory_order_relaxed);
+    Pool(size_t pool_size) {
+      _initialize_workers(pool_size);
     }
     /*
-      Adds a task into the pool
+      Adds a task into the pool. The given function F will take all arguments that
+      is given by the caller. This function is exception free (except the standard
+      alloc error )
     */
     template <typename F, typename... Args>
       requires(std::invocable<F, Args...>)
-    std::future<
-      decltype(std::declval<F>()(std::declval<Args>()...))
-    > add_task(F func, Args &&...args) {
-      using R = decltype(std::declval<F>()(std::declval<Args>()...));
-      std::promise<R> promise;
-      std::future<R> future = promise.get_future();
-      _broker.send(std::make_unique<ParametrizedTask<R, F, Args...>>(
-        func, std::move(promise), std::forward<Args>(args)...
-      ));
-      return std::move(future);
+    std::expected<
+      std::future<typename ParametrizedTask<F, Args...>::return_t>,
+      PoolError<ErrorCode::POOL_IS_NOT_LISTENING>>
+    add_task(F func, Args &&...args) noexcept {
+      using return_t = ParametrizedTask<F, Args...>::return_t;
+      std::promise<return_t> p;
+      std::future<return_t> f = p.get_future();
+      try {
+        _broker.send(std::make_unique<ParametrizedTask<F, Args...>>(
+          func, std::move(p), std::forward<Args>(args)...
+        ));
+      } catch (const channel::ChannelError<channel::ErrorCode::SEND_ERROR_NOT_LISTENING> &e) {
+        return std::unexpected{PoolError<ErrorCode::POOL_IS_NOT_LISTENING>{}};
+      }
+      return std::expected<std::future<return_t>, PoolError<ErrorCode::POOL_IS_NOT_LISTENING>>{
+        std::move(f)
+      };
+    }
+    /*
+      Adds a task into the pool. The given function F will take a task context
+      plus all arguments given by the caller. This is an override to the above
+      function.
+    */
+    template <typename F, typename... Args>
+      requires(std::invocable<F, const TaskContext &, Args...>)
+    std::expected<
+      std::future<typename ParametrizedContextedTask<F, Args...>::return_t>,
+      PoolError<ErrorCode::POOL_IS_NOT_LISTENING>>
+    add_task(F func, Args &&...args) noexcept {
+      using return_t = ParametrizedContextedTask<F, Args...>::return_t;
+      std::promise<return_t> p;
+      std::future<return_t> f = p.get_future();
+      try {
+        _broker.send(std::make_unique<ParametrizedContextedTask<F, Args...>>(
+          func, std::move(p), std::forward<Args>(args)...
+        ));
+      } catch (const channel::ChannelError<channel::ErrorCode::SEND_ERROR_NOT_LISTENING> &e) {
+        return std::unexpected{PoolError<ErrorCode::POOL_IS_NOT_LISTENING>{}};
+      }
+      return std::expected<std::future<return_t>, PoolError<ErrorCode::POOL_IS_NOT_LISTENING>>{
+        std::move(f)
+      };
     }
     /*
       Returns the size of the thread pool
@@ -113,29 +172,70 @@ namespace thread_plus {
     size_t size() {
       return _workers.size();
     }
-    ~Pool() {
+    /*
+      Runs all task and joins all threads. After join() is called, new tasks
+      cannot be added to the pool anymore.
+    */
+    void join() {
+      _broker.join();
+      _join_workers();
+    }
+    /*
+      Runs all task and join all threads. After kill() is called, the thread will
+      be killed.
+    */
+    void kill() {
       _broker.kill();
-      for (auto &worker : _workers) {
-        if (worker.joinable()) worker.join();
+      _join_workers();
+    }
+    /*
+      If the thread is joinable
+    */
+    bool joinable() {
+      return _broker.joinable();
+    }
+    /*
+      kills the Pool and joins all the workers safely.
+    */
+    ~Pool() {
+      if (joinable()) {
+        _broker.kill();
+        _join_workers();
       }
     }
 
   private:
-    mutable Channel<Task> _broker;
+    mutable channel::Channel<Task> _broker;
     std::vector<std::thread> _workers;
-    std::atomic<PoolState> _state;
 
-    void _thread_task() const noexcept {
+    void _thread_task(size_t worker_id) const noexcept {
+      auto context = TaskContext{
+        .worker_id = worker_id,
+        .thread_id = std::this_thread::get_id(),
+        .processed_task = 0,
+        .start_time = std::chrono::system_clock::now()
+      };
       while (true) {
         auto expected_task = _broker.recv();
         if (expected_task.has_value()) {
+          // Validity of the task is guaranteed by this thread pool. No invalid
+          // task will be sent through the channel. unique_ptr will never be
+          // nullptr;
           std::unique_ptr<Task> task = std::move(expected_task.value());
-          // Validity of the task is guaranteed by this thread pool. No invalid task will be sent
-          // through the channel.
-          (*task)();
+          (*task)(context);
         } else
+          // If recv incurs an error, just quit
           break;
       }
     }
+
+    void _initialize_workers(size_t pool_size) noexcept {
+      _workers.reserve(pool_size);
+      for (size_t i = 0; i < pool_size; i += 1)
+        _workers.emplace_back(std::thread{&Pool::_thread_task, this, i});
+    }
+    void _join_workers() noexcept {
+      std::ranges::for_each(_workers, [](std::thread &t) { t.join(); });
+    }
   };
-}
+} // namespace thread_plus::pool
