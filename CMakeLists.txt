@@ -16,7 +16,7 @@ target_sources(thread_plus
 
 # Add Tests Conditionally
 if (EXIST ${CMAKE_CURRENT_LIST_DIR}/lib/test-lib/CMakeLists.txt)
-  add_subdirectory(lib/test-lib EXCLUDE_FROM_ALL)
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/test-lib EXCLUDE_FROM_ALL)
   add_executable(
     thread_plus_tests
     EXCLUDE_FROM_ALL 
