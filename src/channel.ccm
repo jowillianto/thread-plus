@@ -66,6 +66,16 @@ namespace thread_plus::channel {
       throw if the channel is joining or dead. Throws :
       ChannelError<ErrorCode::SEND_ERROR_NOT_LISTENING>
     */
+    template <typename O, typename... Args>
+      requires(std::constructible_from<O, Args...> && std::convertible_to<std::unique_ptr<O>, std::unique_ptr<T>>)
+    void send(Args &&...args) {
+      auto message = std::make_unique<O>(std::forward<Args>(args)...);
+      send(std::move(message));
+    }
+    /*
+      Send a message by constructing it in place. This assumes that we are constructing type T in
+      place. 
+    */
     template <typename... Args>
       requires(std::constructible_from<T, Args...>)
     void send(Args &&...args) {

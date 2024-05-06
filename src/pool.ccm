@@ -131,9 +131,9 @@ namespace thread_plus::pool {
       std::promise<return_t> p;
       std::future<return_t> f = p.get_future();
       try {
-        _broker.send(std::make_unique<ParametrizedTask<F, Args...>>(
+        _broker.send<ParametrizedTask<F, Args...>>(
           func, std::move(p), std::forward<Args>(args)...
-        ));
+        );
       } catch (const channel::ChannelError<channel::ErrorCode::SEND_ERROR_NOT_LISTENING> &e) {
         return std::unexpected{PoolError<ErrorCode::POOL_IS_NOT_LISTENING>{}};
       }
@@ -156,9 +156,9 @@ namespace thread_plus::pool {
       std::promise<return_t> p;
       std::future<return_t> f = p.get_future();
       try {
-        _broker.send(std::make_unique<ParametrizedContextedTask<F, Args...>>(
+        _broker.send<ParametrizedContextedTask<F, Args...>>(
           func, std::move(p), std::forward<Args>(args)...
-        ));
+        );
       } catch (const channel::ChannelError<channel::ErrorCode::SEND_ERROR_NOT_LISTENING> &e) {
         return std::unexpected{PoolError<ErrorCode::POOL_IS_NOT_LISTENING>{}};
       }
