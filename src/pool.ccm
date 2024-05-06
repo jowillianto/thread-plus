@@ -169,7 +169,7 @@ namespace thread_plus::pool {
     /*
       Returns the size of the thread pool
     */
-    size_t size() {
+    size_t size() const {
       return _workers.size();
     }
     /*
@@ -191,7 +191,7 @@ namespace thread_plus::pool {
     /*
       If the thread is joinable
     */
-    bool joinable() {
+    bool joinable() const {
       return _broker.joinable();
     }
     /*
@@ -205,10 +205,10 @@ namespace thread_plus::pool {
     }
 
   private:
-    mutable channel::Channel<Task> _broker;
+    channel::Channel<Task> _broker;
     std::vector<std::thread> _workers;
 
-    void _thread_task(size_t worker_id) const noexcept {
+    void _thread_task(size_t worker_id) noexcept {
       auto context = TaskContext{
         .worker_id = worker_id,
         .thread_id = std::this_thread::get_id(),
