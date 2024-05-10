@@ -79,6 +79,25 @@ auto channel_tests =
       }
     )
     .add_test(
+      "channel-destructor-no-block",
+      []() {
+        std::future<void> destroy_channel = std::async(std::launch::async, []() {
+          auto channel = thread_plus::channel::Channel<int>{};
+          channel.send(test_lib::random_integer(10, 200));
+          /*
+            Channel destruction here, assert that it can be destroyed by timing out the time
+          */
+        });
+        /*
+          Assert that waiting for one second implies that the channel can be destroyed.
+        */
+        test_lib::assert_equal(
+          static_cast<int>(destroy_channel.wait_for(std::chrono::seconds{1})),
+          static_cast<int>(std::future_status::ready)
+        );
+      }
+    )
+    .add_test(
       "send-construct",
       []() {
         auto channel = thread_plus::channel::Channel<std::string>{};
@@ -154,6 +173,25 @@ auto void_channel_tests =
           thread.join();
       }
     )
+    .add_test(
+      "destroy-noblock",
+      []() {
+        std::future<void> destroy_channel = std::async(std::launch::async, []() {
+          auto channel = thread_plus::channel::Channel<void>{};
+          channel.send(test_lib::random_integer(0, 10));
+          /*
+            Channel destruction here, assert that it can be destroyed by timing out the time
+          */
+        });
+        /*
+          Assert that waiting for one second implies that the channel can be destroyed.
+        */
+        test_lib::assert_equal(
+          static_cast<int>(destroy_channel.wait_for(std::chrono::seconds{1})),
+          static_cast<int>(std::future_status::ready)
+        );
+      }
+    )
     .add_test("send-bulk rec-bulk", []() {
       auto channel = thread_plus::channel::Channel<void>{};
       auto send_count = test_lib::random_integer(5, 10);
@@ -217,15 +255,13 @@ auto pool_fuzz_tests = test_lib::Tester{"Pool Fuzz Tests"}.add_test("fuzz int", 
   for (size_t i = 0; i < task_count; i += 1) {
     auto ret_num = test_lib::random_integer(0, 10000);
     _tasks.push_back(ret_num);
-    _tasks_fut.emplace_back(
-      std::move(pool
-                  .add_task([ret_num]() {
-                    auto rest_time = test_lib::random_integer(50, 150);
-                    std::this_thread::sleep_for(std::chrono::milliseconds(rest_time));
-                    return ret_num;
-                  })
-                  .value())
-    );
+    _tasks_fut.emplace_back(pool
+                              .add_task([ret_num]() {
+                                auto rest_time = test_lib::random_integer(50, 150);
+                                std::this_thread::sleep_for(std::chrono::milliseconds(rest_time));
+                                return ret_num;
+                              })
+                              .value());
   }
   for (size_t i = 0; i < task_count; i += 1) {
     test_lib::assert_equal(_tasks[i], _tasks_fut[i].get());

@@ -26,6 +26,7 @@ RUN chmod +x install_cmake.sh
 RUN ./install_cmake.sh --skip-license --prefix=/usr
 RUN cmake --version
 
+# Install ninja
 WORKDIR /opt
 RUN git clone https://github.com/ninja-build/ninja
 WORKDIR /opt/ninja
@@ -34,6 +35,7 @@ RUN CXX=g++ CC=gcc cmake -B build -DCMAKE_BUILD_TYPE=Release .
 RUN ./configure.py --bootstrap
 RUN mv ninja /usr/bin/ninja
 
+# Install llvm
 WORKDIR /opt
 RUN curl -sfSL https://apt.llvm.org/llvm.sh -o llvm.sh
 RUN chmod +x llvm.sh
