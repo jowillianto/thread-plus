@@ -16,6 +16,8 @@ target_sources(thread_plus
 
 if (EXISTS ${CMAKE_CURRENT_LIST_DIR}/lib/test-lib/CMakeLists.txt)
   add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/test-lib EXCLUDE_FROM_ALL)
+
+  # Normal Test
   add_executable(
     thread_plus_tests
     EXCLUDE_FROM_ALL 
@@ -26,4 +28,16 @@ if (EXISTS ${CMAKE_CURRENT_LIST_DIR}/lib/test-lib/CMakeLists.txt)
     thread_plus
   )
   target_compile_options(thread_plus_tests PRIVATE "-Wall" "-Werror")
+
+  # Test ASAN
+  add_executable(
+    thread_plus_tests_asan
+    EXCLUDE_FROM_ALL 
+    ${CMAKE_CURRENT_LIST_DIR}/tests/thread_tests.cpp
+  )
+  target_link_libraries(thread_plus_tests_asan
+    test_lib 
+    thread_plus
+  )
+  target_compile_options(thread_plus_tests_asan PRIVATE "-Wall" "-Werror" "-fsanitize=address")
 endif()
