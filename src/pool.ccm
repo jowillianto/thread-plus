@@ -8,10 +8,10 @@ module;
 #include <thread>
 #include <tuple>
 #include <utility>
-export module thread_plus:pool;
+export module moderna.thread_plus:pool;
 import :channel;
 
-namespace thread_plus::pool {
+namespace moderna::thread_plus::pool {
   /*
     Thrown when join is performed on a pool whose join is running on another
     thread.

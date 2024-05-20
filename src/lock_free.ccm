@@ -1,0 +1,66 @@
+module;
+#include <atomic>
+#include <memory>
+#include <optional>
+export module moderna.thread_plus:lock_free;
+
+namespace moderna::thread_plus::lock_free {
+  template <typename T> struct LockFreeNode {
+    std::optional<T> data;
+    std::atomic<LockFreeNode *> next_node;
+
+    /*
+      Construct only the data part. The rest will be copied.
+    */
+    template <typename... Args>
+    LockFreeNode(Args &&...args) : data{std::forward<Args>(args)...}, next_node{nullptr} {}
+    LockFreeNode(LockFreeNode *next_node = nullptr) : data{std::nullopt}, next_node(next_node) {}
+  };
+  /*
+    A Lock Free Queue. Use T = unique_ptr<T> to prevent data copying. Uses a linked list that acts 
+    as a queue. Where new entries are queued to the tail and old entries are queued to the head.
+  */
+  export template <typename T> struct Queue {
+  public:
+    /*
+      Initialize both pointers to queue to empty. Note that it is impossible for a constructor to
+      be called from multiple threads. This includes destructors.
+    */
+    Queue() {
+      auto bot_ptr = std::make_unique<LockFreeNode<T>>();
+      auto top_ptr = std::make_unique<LockFreeNode<T>>(bot_ptr.get());
+
+      /*
+        No except guarantee by the release function.
+      */
+      _top = top_ptr.release();
+      _bot = bot_ptr.release();
+    }
+
+    /*
+      Obtained the first entry in the queue, this will delete the entry in the queue effectively.
+    */
+    T pop() {}
+
+    /*
+      Insertion by adding in place.
+    */
+    template <typename... Args>
+      requires(std::is_constructible_v<T, Args...>)
+    void add(Args &&...args) {
+      LockFreeNode<T>* bot = _bot.load(std::memory_order::relaxed);
+      while ((bot -> next_node).compare_exchange_weak()) {
+        
+      }
+    }
+
+  private:
+    std::atomic<LockFreeNode<T> *> _top;
+
+    /*
+      This is to ensure that next_node in the last node and this pointer is the same. This allows us
+      to update the value at the same time.
+    */
+    std::atomic<LockFreeNode<T> *> _bot;
+  };
+}

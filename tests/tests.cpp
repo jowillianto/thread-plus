@@ -1,11 +1,15 @@
-import test_lib;
-import thread_plus;
+import moderna.test_lib;
+import moderna.thread_plus;
 #include <chrono>
+#include <iostream>
+#include <atomic>
 #include <future>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
+
+using namespace moderna;
 
 auto channel_tests =
   test_lib::Tester{"Basic Generic Channel"}
@@ -130,8 +134,7 @@ auto channel_tests =
       std::vector<std::thread> receivers;
       receivers.reserve(n_sends + 1);
       receivers.push_back(std::thread{[&channel, &sig, n_sends]() {
-        sig.send(n_sends + 1);
-        channel.join();
+        channel.join([n_sends, &sig](){ sig.send(n_sends + 1); });
       }});
       for (int i = 0; i < n_sends; i += 1) {
         receivers.emplace_back(std::thread{[&channel, &sig]() {
@@ -152,6 +155,7 @@ auto channel_tests =
           receiver.join();
         return;
       }
+      auto _ = channel.recv();
       for (auto &receiver : receivers)
         receiver.join();
       test_lib::assert_equal(true, false);
@@ -246,23 +250,30 @@ auto pool_tests =
     });
 auto pool_fuzz_tests = test_lib::Tester{"Pool Fuzz Tests"}.add_test("fuzz int", []() {
   auto thread_count = test_lib::random_integer(5, 20);
-  auto task_count = thread_count * test_lib::random_integer(5, 100);
+  auto task_count =
+    thread_count * test_lib::random_integer(static_cast<int>(1e2), static_cast<int>(2e2));
   auto pool = thread_plus::pool::Pool{static_cast<size_t>(thread_count)};
   std::vector<int> _tasks;
   std::vector<std::future<int>> _tasks_fut;
+  std::atomic<int> task_counter;
+  std::atomic_flag is_all_added = ATOMIC_FLAG_INIT;
   _tasks.reserve(task_count);
   _tasks_fut.reserve(task_count);
+
   for (size_t i = 0; i < task_count; i += 1) {
     auto ret_num = test_lib::random_integer(0, 10000);
     _tasks.push_back(ret_num);
     _tasks_fut.emplace_back(pool
-                              .add_task([ret_num]() {
-                                auto rest_time = test_lib::random_integer(50, 150);
-                                std::this_thread::sleep_for(std::chrono::milliseconds(rest_time));
+                              .add_task([ret_num, &task_counter, task_count, &is_all_added]() {
+                                while (!is_all_added.test(std::memory_order::relaxed));
+                                int cur = task_counter.fetch_add(1, std::memory_order::relaxed) + 1;
+                                auto rest_time = test_lib::random_integer(50, 5000);
+                                std::this_thread::sleep_for(std::chrono::microseconds(rest_time));
                                 return ret_num;
                               })
                               .value());
   }
+  is_all_added.test_and_set(std::memory_order::acquire);
   for (size_t i = 0; i < task_count; i += 1) {
     test_lib::assert_equal(_tasks[i], _tasks_fut[i].get());
   }

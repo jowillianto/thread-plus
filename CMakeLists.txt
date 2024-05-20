@@ -1,43 +1,24 @@
 cmake_minimum_required(VERSION 3.28)
-project(thread_plus)
+project(moderna_thread_plus)
 set (CMAKE_CXX_STANDARD 23)
 set (CMAKE_CXX_STANDARD_REQUIRED true)
 set (CMAKE_CXX_SCAN_FOR_MODULES true)
 
-add_library(thread_plus)
+include (CTest)
+add_library(moderna_thread_plus)
 file (
-  GLOB thread_plus_ccm
+  GLOB moderna_thread_plus_src
   "${CMAKE_CURRENT_LIST_DIR}/src/*.ccm"
 )
-target_sources(thread_plus
+target_sources(moderna_thread_plus
   PUBLIC 
-    FILE_SET CXX_MODULES FILES ${thread_plus_ccm}
+    FILE_SET CXX_MODULES FILES ${moderna_thread_plus_src}
 )
 
-if (EXISTS ${CMAKE_CURRENT_LIST_DIR}/lib/test-lib/CMakeLists.txt)
-  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/test-lib EXCLUDE_FROM_ALL)
-
-  # Normal Test
-  add_executable(
-    thread_plus_tests
-    EXCLUDE_FROM_ALL 
-    ${CMAKE_CURRENT_LIST_DIR}/tests/thread_tests.cpp
-  )
-  target_link_libraries(thread_plus_tests
-    test_lib 
-    thread_plus
-  )
-  target_compile_options(thread_plus_tests PRIVATE "-Wall" "-Werror")
-
-  # Test ASAN
-  add_executable(
-    thread_plus_tests_asan
-    EXCLUDE_FROM_ALL 
-    ${CMAKE_CURRENT_LIST_DIR}/tests/thread_tests.cpp
-  )
-  target_link_libraries(thread_plus_tests_asan
-    test_lib 
-    thread_plus
-  )
-  target_compile_options(thread_plus_tests_asan PRIVATE "-Wall" "-Werror" "-fsanitize=address")
+if (EXISTS ${CMAKE_CURRENT_LIST_DIR}/../../cmake/CMakeLists.txt AND EXISTS ${CMAKE_CURRENT_LIST_DIR}/../test-lib)
+  include (${CMAKE_CURRENT_LIST_DIR}/../../cmake/CMakeLists.txt)
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../test-lib test-lib)
+  add_test_asan_tsan_usan_ubsan(thread_plus_tests ${CMAKE_CURRENT_LIST_DIR}/tests/tests.cpp "moderna_test_lib;moderna_thread_plus")
+else()
+  message("Clone Moderna Library to Test")
 endif()

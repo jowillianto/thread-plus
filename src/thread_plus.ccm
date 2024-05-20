@@ -1,3 +1,4 @@
-export module thread_plus;
+export module moderna.thread_plus;
 export import :channel;
 export import :pool;
+export import :lock_free;
