@@ -15,10 +15,18 @@ target_sources(moderna_thread_plus
     FILE_SET CXX_MODULES FILES ${moderna_thread_plus_src}
 )
 
-if (EXISTS ${CMAKE_CURRENT_LIST_DIR}/../../cmake/CMakeLists.txt AND EXISTS ${CMAKE_CURRENT_LIST_DIR}/../test-lib)
+if (
+  EXISTS ${CMAKE_CURRENT_LIST_DIR}/../test-lib/CMakeLists.txt 
+  AND EXISTS ${CMAKE_CURRENT_LIST_DIR}/../../cmake/CMakeLists.txt 
+  AND PROJECT_IS_TOP_LEVEL
+)
   include (${CMAKE_CURRENT_LIST_DIR}/../../cmake/CMakeLists.txt)
   add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../test-lib test-lib)
-  add_test_asan_tsan_usan_ubsan(thread_plus_tests ${CMAKE_CURRENT_LIST_DIR}/tests/tests.cpp "moderna_test_lib;moderna_thread_plus")
+  add_test_asan_tsan_usan_ubsan(
+    thread_plus_tests 
+    ${CMAKE_CURRENT_LIST_DIR}/tests/tests.cpp 
+    "moderna_test_lib;moderna_thread_plus"
+  )
 else()
   message("Clone Moderna Library to Test")
 endif()
