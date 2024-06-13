@@ -1,10 +1,10 @@
 import moderna.test_lib;
 import moderna.thread_plus;
-#include <chrono>
-#include <iostream>
 #include <atomic>
+#include <chrono>
 #include <future>
 #include <memory>
+#include <queue>
 #include <string>
 #include <thread>
 #include <vector>
@@ -134,7 +134,7 @@ auto channel_tests =
       std::vector<std::thread> receivers;
       receivers.reserve(n_sends + 1);
       receivers.push_back(std::thread{[&channel, &sig, n_sends]() {
-        channel.join([n_sends, &sig](){ sig.send(n_sends + 1); });
+        channel.join([n_sends, &sig]() { sig.send(n_sends + 1); });
       }});
       for (int i = 0; i < n_sends; i += 1) {
         receivers.emplace_back(std::thread{[&channel, &sig]() {
@@ -251,12 +251,12 @@ auto pool_tests =
 auto pool_fuzz_tests = test_lib::Tester{"Pool Fuzz Tests"}.add_test("fuzz int", []() {
   auto thread_count = test_lib::random_integer(5, 20);
   auto task_count =
-    thread_count * test_lib::random_integer(static_cast<int>(1e2), static_cast<int>(2e2));
+    thread_count * test_lib::random_integer(static_cast<int>(1e3), static_cast<int>(2e3));
   auto pool = thread_plus::pool::Pool{static_cast<size_t>(thread_count)};
   std::vector<int> _tasks;
   std::vector<std::future<int>> _tasks_fut;
   std::atomic<int> task_counter;
-  std::atomic_flag is_all_added = ATOMIC_FLAG_INIT;
+  std::atomic_flag is_all_added;
   _tasks.reserve(task_count);
   _tasks_fut.reserve(task_count);
 
@@ -265,7 +265,8 @@ auto pool_fuzz_tests = test_lib::Tester{"Pool Fuzz Tests"}.add_test("fuzz int", 
     _tasks.push_back(ret_num);
     _tasks_fut.emplace_back(pool
                               .add_task([ret_num, &task_counter, task_count, &is_all_added]() {
-                                while (!is_all_added.test(std::memory_order::relaxed));
+                                while (!is_all_added.test(std::memory_order::relaxed))
+                                  ;
                                 int cur = task_counter.fetch_add(1, std::memory_order::relaxed) + 1;
                                 auto rest_time = test_lib::random_integer(50, 5000);
                                 std::this_thread::sleep_for(std::chrono::microseconds(rest_time));
@@ -281,6 +282,7 @@ auto pool_fuzz_tests = test_lib::Tester{"Pool Fuzz Tests"}.add_test("fuzz int", 
 });
 
 int main() {
+  // lockfree_queue_tests.print_or_exit();
   channel_tests.print_or_exit();
   void_channel_tests.print_or_exit();
   pool_tests.print_or_exit();

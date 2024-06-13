@@ -1,0 +1,56 @@
+module;
+#include <memory>
+#include <shared_mutex>
+export module moderna.fine_grained:node;
+
+namespace moderna::fine_grained {
+  template<typename T>
+  struct Node {
+      Node (std::unique_ptr<T> data, std::unique_ptr<Node<T> > next_node = nullptr) : 
+        _data { std::move(data) }, 
+        _next { std::move(next_node) }
+      {}
+      /*
+        Get the next node for reading. 
+      */
+      std::tuple<std::shared_lock<std::shared_mutex>, const Node<T>& > r_next() const {
+        std::shared_lock l { _mut };
+        return { std::move(l), *_next };
+      }
+      /*
+        Get the next node for writing. 
+      */
+      std::tuple<std::unique_lock<std::shared_mutex>, Node<T>& > rw_next() {
+        std::unique_lock l { _mut };
+        return { std::move(l), *_next };
+      }
+      /*
+        Read the data. 
+      */
+      const T& data() const { return *_data; }
+      /*
+        Read the data (allow writes)
+      */
+      T& data() { return *_data; }
+      /*
+        This will move copy the internal data. 
+      */
+      std::unique_ptr<T> move_data() {
+        return std::move(_data);
+      }
+      
+
+      /*
+        Delete all copy operator etc... 
+      */
+      Node& operator = (const Node& other) = delete;
+      Node& operator = (Node&& other) = delete;
+      
+    private:
+      std::unique_ptr<T> _data;
+      std::unique_ptr<Node<T> > _next;
+      mutable std::shared_mutex _mut;
+  };
+
+  auto node = Node<int>{ std::make_unique<int>(10) };
+}

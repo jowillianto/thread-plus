@@ -1,0 +1,94 @@
+module;
+#include <atomic>
+#include <expected>
+#include <memory>
+export module moderna.lock_free:queue;
+import :node;
+
+namespace moderna::lock_free {
+  template<typename T>
+  struct Node{
+    std::unique_ptr<T> data;
+    std::atomic<Node<T>* > next;
+    std::atomic_flag is_deleted;
+    
+    bool is_sentinel() const {
+      return !static_cast<bool>(data);
+    }
+    bool is_tail() const {
+      return !static_cast<bool>(data);
+    }
+    Node (std::unique_ptr<T> data = nullptr, Node<T>* next = nullptr) : 
+      data { std::move(data) },
+      next { std::move(next) }
+    {}
+  };
+
+  /**
+   * An implementation of LockFree Queue. 
+   * this queue is safe to use in a multithreaded environment and has zero lock overhead. 
+   * pop() O(1)
+   * push() O(1)
+  */
+  export template <typename T> struct Queue {
+    /*
+      The following details the atomic operations 
+      exchange _tail -> relaxed, as long as it is atomic, it is good. 
+      setting any next_node -> release
+    */
+    Queue() : Queue(std::make_shared<Node<T> >()){}
+    /*
+      Removes an element from the queue atomically.
+    */
+    std::expected<std::unique_ptr<T>, ContainerError<ContainerErrNo::IS_EMPTY>> pop() {
+      
+    }
+    /*
+      Constructs a unique pointer in place and add it to the queue atomically.
+    */
+    template <typename... Args>
+      requires std::is_constructible_v<T, Args...>
+    void push(Args &&...args) {
+
+    }
+    /*
+      Adds an element into the queue using a unique pointer atomically. The template specifies if 
+      null check should be done. No null checks on the incoming pointer is done. To avoid errors,
+      please ensure that data is not null. 
+    */
+    void push(std::unique_ptr<T> data) {
+      
+    }
+    /*
+      Gets the size of the queue. 
+    */
+    size_t size(std::memory_order m = std::memory_order::acquire) const {
+      return _current_size.load(m);
+    }
+    ~Queue() {
+    }
+
+  private:
+    /*
+      For anyone wondering why _head is not an atomic pointer. This is solely because
+      this _head node is a sentinel node designed to make our lives easier so that _tail
+      will always point to something.
+    */
+    Node<T>* _head;
+    Node<T>* tail;
+    std::atomic<size_t> _current_size;
+
+    void _increment_size() {
+      _current_size.fetch_add(1, std::memory_order::relaxed);
+    }
+    void _decrement_size() {
+      _current_size.fetch_sub(1, std::memory_order::relaxed);
+    }
+    /*
+      The queue requires a sentinel node to make insertion into the tail easier.
+    */
+    Queue(std::shared_ptr<Node<T>> sentinel_node) {}
+  };
+
+  auto queue = Queue<int>{};
+}

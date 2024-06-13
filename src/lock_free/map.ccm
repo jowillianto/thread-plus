@@ -1,0 +1,2 @@
+export module moderna.lock_free:map;
+import :node;

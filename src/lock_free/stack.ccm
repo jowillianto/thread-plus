@@ -1,0 +1,12 @@
+module;
+#include <atomic>
+#include <exception>
+#include <expected>
+#include <memory>
+export module moderna.lock_free:stack;
+
+import :node;
+
+namespace moderna::lock_free {
+
+}

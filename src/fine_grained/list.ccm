@@ -1,0 +1,11 @@
+module;
+#include <atomic>
+#include <memory>
+export module moderna.fine_grained:list;
+import :node;
+
+namespace moderna::fine_grained {
+  template <typename T> struct List {
+
+  };
+}

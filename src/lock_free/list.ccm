@@ -1,0 +1,2 @@
+export module moderna.lock_free:list;
+import :node;

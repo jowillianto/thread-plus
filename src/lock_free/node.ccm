@@ -1,0 +1,23 @@
+module;
+#include <atomic>
+#include <memory>
+export module moderna.lock_free:node;
+
+namespace moderna::lock_free {
+
+
+  /*
+    Container Error
+  */
+  export enum class ContainerErrNo { IS_EMPTY, LIMIT_REACHED };
+  export template <ContainerErrNo err_no>
+  struct ContainerError : public std::exception {
+    constexpr const char *what() const noexcept {
+      if constexpr (err_no == ContainerErrNo::IS_EMPTY) return "Container is empty";
+      else if constexpr (err_no ==  ContainerErrNo::LIMIT_REACHED)
+        return "Container is full";
+      else
+        static_assert(false, "Should not be reached");
+    }
+  };
+}

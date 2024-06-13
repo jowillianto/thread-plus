@@ -1,0 +1,4 @@
+export module moderna.lock_free;
+export import :queue;
+export import :stack;
+export import :map;
