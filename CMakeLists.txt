@@ -14,11 +14,11 @@ target_sources(moderna_thread_plus
     FILE_SET CXX_MODULES FILES ${moderna_thread_plus_src}
 )
 
-add_library(moderna_lock_free)
-file (
-  GLOB moderna_lock_free_src
-  "${CMAKE_CURRENT_LIST_DIR}/src/lock_free/*.ccm"
-)
+# add_library(moderna_lock_free)
+# file (
+#   GLOB moderna_lock_free_src
+#   "${CMAKE_CURRENT_LIST_DIR}/src/lock_free/*.ccm"
+# )
 # target_sources(moderna_lock_free
 #   PUBLIC
 #     FILE_SET CXX_MODULES FILES ${moderna_lock_free_src}
